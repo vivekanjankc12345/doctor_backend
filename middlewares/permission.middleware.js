@@ -10,6 +10,8 @@ module.exports = function (...requiredPermissions) {
     // Ensure next is a function
     if (typeof next !== 'function') {
       console.error('Permission middleware: next is not a function', typeof next);
+      console.error('Permission middleware: req.method', req.method);
+      console.error('Permission middleware: req.url', req.url);
       return res.status(500).json({ status: 0, error: 'Internal server error: middleware chain broken' });
     }
 

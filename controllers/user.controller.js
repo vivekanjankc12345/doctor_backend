@@ -205,13 +205,8 @@ exports.getCurrentUser = async (req, res) => {
             "firstName lastName email username phone department specialization shift status roles hospitalId createdAt lastLogin"
           );
 
-          // Populate roles from main DB
-          if (user && user.roles && user.roles.length > 0) {
-            const roleObjects = await Role.find({
-              _id: { $in: user.roles },
-            }).select("name description");
-            user.roles = roleObjects;
-          }
+          // Populate roles from main DB - will be processed later in the function
+          // Keep roles as-is for now, they'll be properly formatted below
         }
       } catch (err) {
         console.error("Error loading tenant user:", err);
@@ -234,13 +229,8 @@ exports.getCurrentUser = async (req, res) => {
 
             if (tenantUser) {
               user = tenantUser;
-              // Populate roles from main DB
-              if (user.roles && user.roles.length > 0) {
-                const roleObjects = await Role.find({
-                  _id: { $in: user.roles },
-                }).select("name description");
-                user.roles = roleObjects;
-              }
+              // Populate roles from main DB - will be processed later in the function
+              // Keep roles as-is for now, they'll be properly formatted below
               break;
             }
           } catch (err) {
@@ -258,32 +248,55 @@ exports.getCurrentUser = async (req, res) => {
     }
 
     // Ensure roles are always populated with names (convert to plain object if needed)
-    if (user.roles && user.roles.length > 0) {
-      const roleIds = user.roles.map((r) =>
-        typeof r === "object" ? r._id : r
-      );
-
-      const fullRoles = await Role.find({ _id: { $in: roleIds } }).select(
-        "_id name description"
-      );
-
-      user.roles = fullRoles;
+    const userObj = user.toObject ? user.toObject() : { ...user };
+    
+    if (userObj.roles && userObj.roles.length > 0) {
+      const rolesWithNames = [];
+      for (const role of userObj.roles) {
+        if (typeof role === "object" && role !== null && role.name) {
+          // Role already has name (populated)
+          rolesWithNames.push({
+            _id: role._id || role.id,
+            name: role.name,
+            description: role.description || "",
+          });
+        } else {
+          // Role is an ID (string or ObjectId) - need to fetch it
+          const roleId = typeof role === "string" ? role : (role?._id || role);
+          if (roleId) {
+            try {
+              const roleObj = await Role.findById(roleId).select("name description");
+              if (roleObj) {
+                rolesWithNames.push({
+                  _id: roleObj._id,
+                  name: roleObj.name,
+                  description: roleObj.description || "",
+                });
+              }
+            } catch (err) {
+              console.error(`Error fetching role ${roleId}:`, err);
+            }
+          }
+        }
+      }
+      userObj.roles = rolesWithNames;
+    } else {
+      userObj.roles = [];
     }
 
-    console.log("User roles after population:", user.roles);
+    console.log("User roles after population:", userObj.roles);
 
     // Get hospital info if exists
     let hospital = null;
-    if (user.hospitalId) {
-      hospital = await Hospital.findById(user.hospitalId).select("name email");
+    if (userObj.hospitalId) {
+      hospital = await Hospital.findById(userObj.hospitalId).select("name email");
     }
 
-    const userResponse = user.toObject ? user.toObject() : user;
-    userResponse.hospital = hospital;
-    console.log("Final user response:", userResponse);
+    userObj.hospital = hospital;
+    console.log("Final user response:", userObj);
     res.status(200).json({
       status: 1,
-      user: userResponse,
+      user: userObj,
     });
   } catch (error) {
     res.status(500).json({ status: 0, error: error.message });
@@ -460,38 +473,58 @@ exports.getAllUsers = async (req, res) => {
     ]);
 
     // Ensure all roles are populated with names (not IDs)
-    // FINAL ROLE POPULATION (ensure id + name + description)
-    if (users && users.length > 0) {
-      for (let i = 0; i < users.length; i++) {
-        const userObj = users[i].toObject ? users[i].toObject() : users[i];
-
+    // Process users to ensure roles have names
+    const processedUsers = await Promise.all(
+      users.map(async (user) => {
+        const userObj = user.toObject ? user.toObject() : { ...user };
+        
+        // Process roles to ensure they have names
         if (userObj.roles && userObj.roles.length > 0) {
-          const roleIds = userObj.roles.map(r =>
-            typeof r === "object" ? r._id : r
-          );
-
-          const fullRoles = await Role.find({ _id: { $in: roleIds } })
-            .select("_id name description");
-          console.log(fullRoles)
-
-          userObj.roles = fullRoles;
-
-          // replace back
-          users[i] = userObj;
+          const rolesWithNames = [];
+          for (const role of userObj.roles) {
+            if (typeof role === "object" && role !== null && role.name) {
+              // Role already has name (populated)
+              rolesWithNames.push({
+                _id: role._id || role.id,
+                name: role.name,
+                description: role.description || "",
+              });
+            } else {
+              // Role is an ID (string or ObjectId) - need to fetch it
+              const roleId = typeof role === "string" ? role : (role?._id || role);
+              if (roleId) {
+                try {
+                  const roleObj = await Role.findById(roleId).select("name description");
+                  if (roleObj) {
+                    rolesWithNames.push({
+                      _id: roleObj._id,
+                      name: roleObj.name,
+                      description: roleObj.description || "",
+                    });
+                  }
+                } catch (err) {
+                  console.error(`Error fetching role ${roleId}:`, err);
+                }
+              }
+            }
+          }
+          userObj.roles = rolesWithNames;
+        } else {
+          userObj.roles = [];
         }
-      }
-    }
+        
+        // Clean up sensitive fields
+        delete userObj.password;
+        delete userObj.passwordHistory;
+        
+        return userObj;
+      })
+    );
 
-    // console.log(users, "kuku")
     res.status(200).json({
       status: 1,
       data: {
-        users: users.map((u) => {
-          const userObj = u.toObject ? u.toObject() : u;
-          delete userObj.password;
-          delete userObj.passwordHistory;
-          return userObj;
-        }),
+        users: processedUsers,
         pagination: {
           page: parseInt(page),
           limit: parseInt(limit),
@@ -933,7 +966,7 @@ exports.getDashboardStats = async (req, res) => {
     const doctorRoleId = doctorRole ? doctorRole._id : null;
 
     // Count users (from tenant DB if available)
-    const totalUsers = await UserModel.countDocuments({
+    const totalUsers = await UserModel.countDocuments({ 
       hospitalId: hospitalId,
       status: "ACTIVE"
     });
@@ -941,7 +974,7 @@ exports.getDashboardStats = async (req, res) => {
     // Count doctors
     let totalDoctors = 0;
     if (doctorRoleId) {
-      totalDoctors = await UserModel.countDocuments({
+      totalDoctors = await UserModel.countDocuments({ 
         hospitalId: hospitalId,
         roles: doctorRoleId,
         status: "ACTIVE"
@@ -949,13 +982,13 @@ exports.getDashboardStats = async (req, res) => {
     }
 
     // Count patients (from main database)
-    const totalPatients = await Patient.countDocuments({
-      hospitalId: hospitalId
+    const totalPatients = await Patient.countDocuments({ 
+      hospitalId: hospitalId 
     });
 
     // Count appointments (from main database)
-    const totalAppointments = await Appointment.countDocuments({
-      hospitalId: hospitalId
+    const totalAppointments = await Appointment.countDocuments({ 
+      hospitalId: hospitalId 
     });
 
     res.status(200).json({

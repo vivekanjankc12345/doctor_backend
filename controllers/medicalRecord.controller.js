@@ -43,11 +43,14 @@ exports.createMedicalRecord = async (req, res) => {
       : `MR-${Date.now()}`;
 
     // Create medical record
+    // For nurses, use the assigned doctor if available, otherwise use the nurse's ID
+    const recordDoctor = req.user.id; // Can be doctor or nurse
+    
     const medicalRecord = await MedicalRecord.create({
       hospitalId: req.user.hospitalId,
       recordId,
       patient,
-      doctor: req.user.id,
+      doctor: recordDoctor,
       visitDate: visitDate || new Date(),
       chiefComplaint,
       diagnosis: diagnosis || [],

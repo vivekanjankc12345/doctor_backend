@@ -48,12 +48,16 @@ const vitalSchema = new mongoose.Schema(
 );
 
 // Calculate BMI before saving
-vitalSchema.pre("save", function(next) {
-  if (this.weight && this.height) {
-    const heightInMeters = this.height / 100; // Convert cm to meters
-    this.bmi = parseFloat((this.weight / (heightInMeters * heightInMeters)).toFixed(2));
+vitalSchema.pre("save", async function() {
+  try {
+    if (this.weight && this.height) {
+      const heightInMeters = this.height / 100; // Convert cm to meters
+      this.bmi = parseFloat((this.weight / (heightInMeters * heightInMeters)).toFixed(2));
+    }
+  } catch (error) {
+    console.error('Error calculating BMI in vital pre-save hook:', error);
+    // Don't throw error, just log it - BMI calculation is optional
   }
-  next();
 });
 
 module.exports = mongoose.model("Vital", vitalSchema);

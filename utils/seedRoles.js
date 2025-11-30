@@ -147,6 +147,8 @@ module.exports = async () => {
           "APPOINTMENT:READ",
           "VITALS:CREATE",
           "VITALS:READ",
+          "MEDICAL_RECORD:CREATE",
+          "MEDICAL_RECORD:READ",
           "VITALS:UPDATE"
         ],
         parentRole: "HOSPITAL_ADMIN"

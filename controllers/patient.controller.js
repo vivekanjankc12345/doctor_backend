@@ -195,15 +195,24 @@ exports.searchPatients = async (req, res) => {
           console.log(`🔍 Patient ${i + 1}:`, {
             name: p.name,
             assignedNurse: p.assignedNurse?._id || p.assignedNurse,
-            assignedNurseType: typeof p.assignedNurse
+            assignedNurseType: typeof p.assignedNurse,
+            assignedNurseName: p.assignedNurse?.firstName || 'N/A',
+            assignedDoctor: p.assignedDoctor?._id || p.assignedDoctor,
+            assignedDoctorName: p.assignedDoctor?.firstName || 'N/A'
           });
         });
       }
     }
     
+    // Convert Mongoose documents to plain objects to ensure proper serialization
+    const patientsData = patients.map(p => {
+      const patientObj = p.toObject ? p.toObject() : p;
+      return patientObj;
+    });
+    
     res.status(200).json({
       status: 1,
-      patients,
+      patients: patientsData,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -318,7 +327,13 @@ exports.getPatientById = async (req, res) => {
       return res.status(404).json({ status: 0, message: "Patient not found" });
     }
     
-    res.status(200).json({ status: 1, patient });
+    // Convert to plain object to ensure proper serialization
+    const patientObj = patient.toObject ? patient.toObject() : patient;
+    
+    console.log('🔍 Patient by ID - assignedDoctor:', patientObj.assignedDoctor);
+    console.log('🔍 Patient by ID - assignedNurse:', patientObj.assignedNurse);
+    
+    res.status(200).json({ status: 1, patient: patientObj });
   } catch (error) {
     res.status(500).json({ status: 0, error: error.message });
   }
@@ -391,10 +406,16 @@ exports.updatePatient = async (req, res) => {
     await patient.populate("assignedDoctor", "firstName lastName email specialization");
     await patient.populate("assignedNurse", "firstName lastName email");
     
+    // Convert to plain object to ensure proper serialization
+    const patientObj = patient.toObject ? patient.toObject() : patient;
+    
+    console.log('🔍 Patient updated - assignedDoctor:', patientObj.assignedDoctor);
+    console.log('🔍 Patient updated - assignedNurse:', patientObj.assignedNurse);
+    
     res.status(200).json({ 
       status: 1, 
       message: "Patient updated successfully",
-      patient 
+      patient: patientObj
     });
   } catch (error) {
     res.status(500).json({ status: 0, error: error.message });

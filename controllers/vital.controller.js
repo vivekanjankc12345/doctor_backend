@@ -6,8 +6,11 @@ const { generateVitalId } = require("../utils/idGenerator");
 /**
  * Record patient vitals/tests (Nurse functionality)
  */
-exports.recordVitals = async (req, res) => {
+exports.recordVitals = async (req, res, next) => {
   try {
+    console.log('🔍 recordVitals - Request body:', JSON.stringify(req.body, null, 2));
+    console.log('🔍 recordVitals - User:', req.user?.id, 'Hospital:', req.user?.hospitalId);
+    
     const {
       patient,
       bloodPressure,
@@ -27,6 +30,7 @@ exports.recordVitals = async (req, res) => {
 
     // Validate required fields
     if (!patient) {
+      console.error('🔍 recordVitals - Missing patient ID');
       return res.status(400).json({ status: 0, message: "Patient ID is required" });
     }
 
@@ -89,25 +93,70 @@ exports.recordVitals = async (req, res) => {
       visitType: visitType || "OPD"
     };
 
-    // Add optional fields only if they exist
-    if (bloodPressure) vitalData.bloodPressure = bloodPressure;
-    if (pulse !== undefined && pulse !== null && pulse !== '') vitalData.pulse = Number(pulse);
-    if (temperature !== undefined && temperature !== null && temperature !== '') vitalData.temperature = Number(temperature);
-    if (respiratoryRate !== undefined && respiratoryRate !== null && respiratoryRate !== '') vitalData.respiratoryRate = Number(respiratoryRate);
-    if (oxygenSaturation !== undefined && oxygenSaturation !== null && oxygenSaturation !== '') vitalData.oxygenSaturation = Number(oxygenSaturation);
-    if (bloodSugar) vitalData.bloodSugar = bloodSugar;
-    if (hba1c !== undefined && hba1c !== null && hba1c !== '') vitalData.hba1c = Number(hba1c);
-    if (weight !== undefined && weight !== null && weight !== '') vitalData.weight = Number(weight);
-    if (height !== undefined && height !== null && height !== '') vitalData.height = Number(height);
+    // Add optional fields only if they exist and are valid
+    if (bloodPressure && typeof bloodPressure === 'object' && (bloodPressure.systolic || bloodPressure.diastolic)) {
+      vitalData.bloodPressure = {
+        systolic: bloodPressure.systolic ? Number(bloodPressure.systolic) : undefined,
+        diastolic: bloodPressure.diastolic ? Number(bloodPressure.diastolic) : undefined
+      };
+    }
+    if (pulse !== undefined && pulse !== null && pulse !== '') {
+      const pulseNum = Number(pulse);
+      if (!isNaN(pulseNum)) vitalData.pulse = pulseNum;
+    }
+    if (temperature !== undefined && temperature !== null && temperature !== '') {
+      const tempNum = Number(temperature);
+      if (!isNaN(tempNum)) vitalData.temperature = tempNum;
+    }
+    if (respiratoryRate !== undefined && respiratoryRate !== null && respiratoryRate !== '') {
+      const rrNum = Number(respiratoryRate);
+      if (!isNaN(rrNum)) vitalData.respiratoryRate = rrNum;
+    }
+    if (oxygenSaturation !== undefined && oxygenSaturation !== null && oxygenSaturation !== '') {
+      const spo2Num = Number(oxygenSaturation);
+      if (!isNaN(spo2Num)) vitalData.oxygenSaturation = spo2Num;
+    }
+    if (bloodSugar && typeof bloodSugar === 'object' && (bloodSugar.fasting || bloodSugar.random || bloodSugar.postPrandial)) {
+      vitalData.bloodSugar = {};
+      if (bloodSugar.fasting !== undefined && bloodSugar.fasting !== null && bloodSugar.fasting !== '') {
+        const fastingNum = Number(bloodSugar.fasting);
+        if (!isNaN(fastingNum)) vitalData.bloodSugar.fasting = fastingNum;
+      }
+      if (bloodSugar.random !== undefined && bloodSugar.random !== null && bloodSugar.random !== '') {
+        const randomNum = Number(bloodSugar.random);
+        if (!isNaN(randomNum)) vitalData.bloodSugar.random = randomNum;
+      }
+      if (bloodSugar.postPrandial !== undefined && bloodSugar.postPrandial !== null && bloodSugar.postPrandial !== '') {
+        const ppNum = Number(bloodSugar.postPrandial);
+        if (!isNaN(ppNum)) vitalData.bloodSugar.postPrandial = ppNum;
+      }
+    }
+    if (hba1c !== undefined && hba1c !== null && hba1c !== '') {
+      const hba1cNum = Number(hba1c);
+      if (!isNaN(hba1cNum)) vitalData.hba1c = hba1cNum;
+    }
+    if (weight !== undefined && weight !== null && weight !== '') {
+      const weightNum = Number(weight);
+      if (!isNaN(weightNum)) vitalData.weight = weightNum;
+    }
+    if (height !== undefined && height !== null && height !== '') {
+      const heightNum = Number(height);
+      if (!isNaN(heightNum)) vitalData.height = heightNum;
+    }
     if (testResults && Array.isArray(testResults)) vitalData.testResults = testResults;
     if (notes) vitalData.notes = notes;
 
+    console.log('🔍 recordVitals - Final vitalData to save:', JSON.stringify(vitalData, null, 2));
+
     // Create vital record
     const vital = await Vital.create(vitalData);
+    console.log('🔍 recordVitals - Vital created successfully:', vital._id);
 
     // Populate before returning
     await vital.populate("patient", "name patientId");
     await vital.populate("recordedBy", "firstName lastName email");
+
+    console.log('🔍 recordVitals - Vital populated, returning response');
 
     res.status(201).json({
       status: 1,
@@ -116,6 +165,10 @@ exports.recordVitals = async (req, res) => {
     });
   } catch (error) {
     console.error('Error recording vitals:', error);
+    // If next is provided, pass error to error handler, otherwise send response
+    if (next && typeof next === 'function') {
+      return next(error);
+    }
     res.status(500).json({ 
       status: 0, 
       error: error.message,
@@ -134,12 +187,15 @@ exports.getPatientVitals = async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    console.log('🔍 getPatientVitals - Request:', { patientId, page, limit, hospitalId: req.user?.hospitalId });
+
     // Validate patient exists and belongs to same hospital
     const patient = await Patient.findOne({ 
       _id: patientId,
       hospitalId: req.user.hospitalId 
     });
     if (!patient) {
+      console.log('🔍 getPatientVitals - Patient not found');
       return res.status(404).json({ status: 0, message: "Patient not found" });
     }
 
@@ -147,6 +203,8 @@ exports.getPatientVitals = async (req, res) => {
       patient: patientId,
       hospitalId: req.user.hospitalId 
     };
+
+    console.log('🔍 getPatientVitals - Query:', JSON.stringify(query, null, 2));
 
     const vitals = await Vital.find(query)
       .populate("recordedBy", "firstName lastName email")
@@ -156,9 +214,31 @@ exports.getPatientVitals = async (req, res) => {
 
     const total = await Vital.countDocuments(query);
 
+    console.log('🔍 getPatientVitals - Found vitals:', vitals.length, 'Total:', total);
+
+    // Convert Mongoose documents to plain objects
+    const vitalsData = vitals.map(v => {
+      const vitalObj = v.toObject ? v.toObject() : v;
+      return vitalObj;
+    });
+
+    console.log('🔍 getPatientVitals - First vital sample:', vitalsData.length > 0 ? {
+      _id: vitalsData[0]._id,
+      recordedAt: vitalsData[0].recordedAt,
+      bloodPressure: vitalsData[0].bloodPressure,
+      recordedBy: vitalsData[0].recordedBy
+    } : 'No vitals');
+
+    // Set cache headers to prevent 304 responses during development
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+
     res.json({
       status: 1,
-      vitals: vitals,
+      vitals: vitalsData,
       pagination: {
         page,
         limit,
